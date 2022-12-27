@@ -1,0 +1,854 @@
+---
+title: "abn analyses"
+author: "Stacey Cherny"
+output:
+  html_document: default
+  word_document: default
+params:
+  title: default
+editor_options: 
+  chunk_output_type: console
+---
+```{r setup, results="asis"}
+Sys.time()
+# choose model
+#selected.model <- "Ecoli-Urine"
+#selected.model <- "Ecoli-Urine-CAZOFXGEN"
+#selected.model <- "Ecoli-Wound"
+#selected.model <- "Ecoli-Wound-CAZOFXGEN"
+#selected.model <- "Ecoli-Aerobic" # small sample
+#selected.model <- "Ecoli-Anaerobic" # small sample
+#selected.model <- "Ecoli-Sputum" # small smaple
+#selected.model <- "Kpneumoniae-Aerobic"
+#selected.model <- "Kpneumoniae-Urine"
+#selected.model <- "Kpneumoniae-Wound"
+#selected.model <- "Paeuginosa-Urine"
+#selected.model <- "Paeuginosa-Urine-GEN"
+#selected.model <- "Paeuginosa-Urine-CAZ"
+#selected.model <- "Paeuginosa-Wound"
+#selected.model <- "Paeuginosa-Wound-GEN"
+#selected.model <- "Paeuginosa-Wound-CAZ"
+#selected.model <- "Paeuginosa-Sputum"
+#selected.model <- "Paeuginosa-Sputum-GEN"
+#selected.model <- "Paeuginosa-Sputum-CAZ"
+#selected.model <- "Pmirabilis-Urine" # only 522 samples
+#selected.model <- "Pmirabilis-Wound" # 455 samples
+#selected.model <- "Pmirabilis-Aerobic"
+#selected.model <- "Saureus-Aerobic"
+#selected.model <- "Saureus-Urine"
+#selected.model <- "Saureus-Wound"
+OS <- Sys.info()['sysname']
+#if (OS == "Windows"){
+#  knitr::opts_knit$set(root.dir = paste0('C:/Users/Stacey Cherny/OneDrive - Tel-Aviv University/Antibiotic resistance #data/Meir-jags/',selected.model))
+#} else {
+#  knitr::opts_knit$set(root.dir = paste0('~/Meir-jags/',selected.model))
+#}
+#dir.create(selected.model, showWarnings = FALSE)
+  
+knitr::opts_chunk$set(dev = c("png", "svg"),
+    dpi=600, echo=T, include=T, warning=T, message=T, error=F,
+#    fig.path=paste0(selected.model,'/Figs/'))
+    fig.path='Figs/')
+```
+
+```{r load_libraries, results="asis", include=FALSE}
+library(chron)
+#library(anytime)
+library(devtools)
+#library(lubridate)
+#library(flipTime)
+library(data.table)
+library(tidyr)
+library(stringi)
+library(abn)
+library(Rgraphviz)
+library(Cairo)
+library(coda)
+library(foreach)
+library(dplyr)
+library(polycor)
+library(knitr)
+library(kableExtra)
+library(purrr)
+library(doParallel)
+registerDoParallel(36)
+```
+
+```{r set_tmp_read_data, include=FALSE}
+#setwd("C:/Users/Stacey Cherny/OneDrive - Tel-Aviv University/Antibiotic resistance data/")
+if (OS == "Windows"){
+  tmpdir <- "C:/Users/Stacey Cherny/tmp/jags/"
+  load("G:/My Drive/TAU/Antibiotics Resistance/Meir Hospital/R Variables/All resistance - w features from admis.rdata")} else { # res
+  dir.create("jags", showWarnings = FALSE)
+  tmpdir <- "jags/"
+load("~/Meir/All resistance - w features from admis.rdata")}
+```
+
+```{r remove_and_recode}
+# view antibiotics
+meir <- res
+sort(table(meir$Bacterium))
+sort(table(meir$Sample.Location))
+meir$Antibiotic.Family.Name <- NULL
+meir$Antibiotic.Generic.Name <- NULL
+meir$Original.Culture.No <- NULL
+meir$Merged.Resistances <- NULL
+data_wide <- pivot_wider(meir, names_from=Antibiotic.Tested, values_from = Resistance)
+nrow(data_wide)
+data_wide$Age <- data_wide$Age.At.Culture.Time.Date
+#data_wide$X_Blank <- NULL
+#data_wide$Referrer <- NULL
+#data_wide$Sample_type <- NULL
+
+####shorter names w/R in front for resistance
+names(data_wide)[names(data_wide)=="amikacin"]='AMK'
+names(data_wide)[names(data_wide)=="amoxicillin/clavul a"]='AMC'
+names(data_wide)[names(data_wide)=="ampicillin"]='AMP'
+names(data_wide)[names(data_wide)=="ceftazidime"]='CAZ'
+names(data_wide)[names(data_wide)=="ceftriaxone"]='CRO'
+names(data_wide)[names(data_wide)=="cefuroxime"]='CXM'
+names(data_wide)[names(data_wide)=="cephalexin"]='LEX' # but spelled with F in JAC list
+names(data_wide)[names(data_wide)=="ciprofloxacin"]='CIP'
+names(data_wide)[names(data_wide)=="clindamycin"]='CLI'
+names(data_wide)[names(data_wide)=="ertapenem"]='ETP'
+names(data_wide)[names(data_wide)=="erythromycin"]='ERY'
+names(data_wide)[names(data_wide)=="fosfomycin"]='FOF'
+names(data_wide)[names(data_wide)=="fusidic acid"]='Fusid'
+names(data_wide)[names(data_wide)=="gentamicin"]='GEN'
+names(data_wide)[names(data_wide)=="imipenem"]='IPM'
+names(data_wide)[names(data_wide)=="meropenem"]='MEM'
+names(data_wide)[names(data_wide)=="mupirocin"]='MUP' # not in list
+names(data_wide)[names(data_wide)=="nitrofurantoin"]='NIT'
+names(data_wide)[names(data_wide)=="ofloxacin"]='OFX'
+names(data_wide)[names(data_wide)=="oxacillin"]='OXA'
+names(data_wide)[names(data_wide)=="penicillin"]='PEN'
+names(data_wide)[names(data_wide)=="piperacill/tazobact"]='TZP'
+names(data_wide)[names(data_wide)=="piperacillin"]='PIP'
+names(data_wide)[names(data_wide)=="rifampicin"]='RIF'
+names(data_wide)[names(data_wide)=="sulfamethoxa/trimeth"]='SXT'
+names(data_wide)[names(data_wide)=="vancomycin"]='VAN'
+
+#data_wide$Taken.F.other.sum <- #as.logical(data_wide$Taken.F.Colistin+data_wide$Taken.F.Chloramphenicol
+#                                      +data_wide$Taken.F.sulfa+data_wide$Taken.F.other)
+data_wide$Hospitalized.Year.Before <- data_wide$Length.Days.Hospitalized.Past.365.Days
+data_wide$Hospitalized.Year.Before[data_wide$Length.Days.Hospitalized.Past.365.Days == 1] <- 0
+data_wide$Hospitalized.Year.Before[data_wide$Length.Days.Hospitalized.Past.365.Days > 1] <- 1
+data_wide$Hospitalized.Year.Before <- as.factor(data_wide$Hospitalized.Year.Before)
+data_wide$Days.Hospitalized <- log(data_wide$Length.Days.Hospitalized.Past.365.Days+1)
+data_wide$Polymicrobial <- data_wide$N.Unq.Bacteria.Culture
+data_wide$Polymicrobial[data_wide$N.Unq.Bacteria.Culture == 1] <- 0
+data_wide$Polymicrobial[data_wide$N.Unq.Bacteria.Culture > 1] <- 1
+data_wide$Nosocomial <- as.factor(data_wide$Is.Nosocomial)
+# new variables
+#data_wide$Immunosuppression <- as.factor(data_wide$Immunosuppression)
+#data_wide$Dementia <- as.factor(data_wide$Dementia)
+#data_wide$COPD <- as.factor(data_wide$COPD)
+#data_wide$CRF <- as.factor(data_wide$CRF)
+#data_wide$Obesity <- as.factor(data_wide$Obesity)
+#
+#
+sort(table(data_wide$Sample.Location))
+drug.vars <- c("AMK","AMC","AMP","CAZ","CRO","CXM","LEX","CIP","CLI","ETP","ERY","FOF",
+                      "Fusid","GEN","IPM","MEM","MUP","NIT","OFX","OXA","PEN","TZP","PIP",
+                      "RIF","SXT","VAN")
+taken.vars <- grep("^Is.*\\.Past.365.Days.2.Days.Excluded$", names(data_wide), value=T)
+newcov.vars <- c("Immunosuppression","Dementia","Diabetes","COPD","CRF","Obesity")
+# Check frequencies in subset
+fam.taken <- lapply(data_wide[taken.vars], function(x) {
+  return(prop.table(table(x)))
+})
+
+fam.taken.2 <- sapply(fam.taken, "[[", 1)
+sort(1-fam.taken.2)
+
+data_wide$Is.cephalosporin <- data_wide$Is.cephalosporin.Past.365.Days.2.Days.Excluded
+data_wide$Is.betalactam <- data_wide$Is.betalactam.Past.365.Days.2.Days.Excluded
+#data_wide$Is.betalactam.inhibitor <- 0
+#data_wide$Is.betalactam.inhibitor[data_wide$Is.betalactam.inhibitor.Past.365.Days.2.Days.Excluded == 1] <- 1
+data_wide$Is.betalactam.inhibitor <- data_wide$Is.betalactam.inhibitor.Past.365.Days.2.Days.Excluded
+data_wide$Is.nitroimidazole <- data_wide$Is.nitroimidazole.Past.365.Days.2.Days.Excluded
+data_wide$Is.aminoglycoside <- data_wide$Is.aminoglycoside.Past.365.Days.2.Days.Excluded
+data_wide$Is.fluoroquinolone <- data_wide$Is.fluoroquinolone.Past.365.Days.2.Days.Excluded
+
+data_wide$Is.other <- 0
+data_wide$Is.other[data_wide$Is.macrolide.Past.365.Days.2.Days.Excluded == 1 |     data_wide$Is.carbapenem.Past.365.Days.2.Days.Excluded == 1 |
+                     data_wide$Is.glycopeptide.Past.365.Days.2.Days.Excluded == 1 | data_wide$Is.lincosamide.Past.365.Days.2.Days.Excluded == 1 |
+                     data_wide$Is.polymyxin.Past.365.Days.2.Days.Excluded == 1 | data_wide$Is.ansamycins.Past.365.Days.2.Days.Excluded == 1|
+                     data_wide$Is.fusidane.Past.365.Days.2.Days.Excluded == 1 | data_wide$Is.rifamycin.Past.365.Days.2.Days.Excluded == 1 |
+                     data_wide$Is.antimycobacterial.Past.365.Days.2.Days.Excluded == 1 | data_wide$Is.oxazolidinone.Past.365.Days.2.Days.Excluded == 1 |
+                     data_wide$Is.cyclic.lipopeptide.Past.365.Days.2.Days.Excluded == 1] <- 1
+# make into factors for abn
+family.taken.vars <- c("Is.cephalosporin","Is.betalactam","Is.betalactam.inhibitor",
+                       "Is.nitroimidazole","Is.aminoglycoside","Is.fluoroquinolone")
+binary.vars <- c(family.taken.vars,"Is.other",newcov.vars,drug.vars,"Polymicrobial","Sex")
+
+#bact[,binary.vars] <- lapply(bact[,binary.vars], factor)
+#str(bact[,binary.vars])
+data_wide[,binary.vars] <- lapply(data_wide[,binary.vars], factor)
+str(data_wide[,binary.vars])
+```
+
+```{r, code = readLines("model.R")}
+```
+
+```{r complete_data}
+# Check frequencies in subset
+fam.taken <- lapply(bact[taken.vars], function(x) {
+  return(prop.table(table(x)))
+})
+
+fam.taken.2 <- sapply(fam.taken, "[[", 1)
+sort(1-fam.taken.2)
+
+
+rbact <- bact[evars]
+crbact <- as.data.frame(rbact[complete.cases(rbact),])
+nrow(rbact)
+nrow(crbact)
+str(rbact)
+str(crbact)
+colnames(banned)<-rownames(banned)<-names(crbact)
+```
+
+```{r initial_search_up_to_8_parents}
+start.time=Sys.time()
+#/*repeat this increasing the number of max.parents 1 by 1
+mlik <- foreach (i=1:8, .packages=c('abn')) %dopar%{
+  mycache<-buildScoreCache(data.df=crbact, data.dists=mydists,max.parents=i,dag.banned=banned)
+  mp.dag<-mostProbable(score.cache=mycache)
+  saveRDS(mycache, file=paste0("mycache.",i,".rds"))
+  saveRDS(mp.dag, file=paste0("mp.dag.",i,".rds"))
+  fitAbn(object=mp.dag, data.df=crbact, data.dists=mydists)$mlik #give marginal log-likelihood
+}
+end.time=Sys.time()
+end.time-start.time # time taken
+#saveRDS(mlik, file=paste(selected.model,"/mlik-parents1-6.rds",sep=""))
+saveRDS(mlik, file="mlik-parents1-8.rds")
+#mlik <- readRDS(file=paste(selected.model,"/mlik-parents1-6.rds",sep=""))
+#mlik <- readRDS(file="mlik-parents1-6.rds")
+mlik <- unlist(mlik)
+#dev.off()
+plot(mlik,main="Maximum Likelihood vs number of edges per parent")
+mlik
+```
+
+```{r plot_initial_dag}
+d1 <- diff(mlik)
+thresh<-.001
+max.par = which.max((d1 / d1[1]) < thresh)
+max.par
+if(length(max.par) == 0) {max.par=8}
+
+start.time=Sys.time()
+#mycache<-buildScoreCache(data.df=crbact, data.dists=mydists, max.parents=max.par,
+#                         dag.banned=banned)
+#mp.dag<-mostProbable(score.cache=mycache)
+mycache <- readRDS(file=paste0("mycache.",max.par,".rds"))
+mp.dag <- readRDS(file=paste0("mp.dag.",max.par,".rds"))
+initialDAG<-fitAbn(object=mp.dag,data.df=crbact,data.dists=mydists,create.graph=TRUE)
+end.time=Sys.time()
+end.time-start.time # time taken
+initialDAG$mlik
+#saveRDS(initialDAG, file=paste(selected.model,"/initialDAG.rds",sep=""))
+#saveRDS(mp.dag, file=paste(selected.model,"/mp.dag.rds",sep=""))
+saveRDS(initialDAG, "initialDAG.rds")
+saveRDS(mp.dag, "mp.dag.rds")
+#initialDAG <- readRDS(file="initialDAG.rds")
+#mp.dag <- readRDS(file="mp.dag.rds")
+#Draw initial DAG
+dev.off()
+sum(mp.dag$dag)
+CairoSVG("Initial-dag.svg")
+plotAbn(dag = mp.dag$dag, data.dists = mydists,
+        fitted.values = initialDAG$modes,
+        digits = 3,
+        edge.direction = "pc",
+        node.fillcolor = NA, edge.color = "black",
+        node.fontsize = 14, edge.fontsize = 14,
+        plot = TRUE)
+dev.off()
+CairoPNG("Initial-dag.png")
+plotAbn(dag = mp.dag$dag, data.dists = mydists,
+        fitted.values = initialDAG$modes,
+        digits = 3,
+        edge.direction = "pc",
+        node.fillcolor = NA, edge.color = "black",
+        node.fontsize = 14, edge.fontsize = 14,
+        plot = TRUE)
+dev.off()
+method = c("mi.raw", "mi.raw.pc", "ls", "ls.pc", "stat.dist")
+for (j in method){
+strength.init <- linkStrength(mp.dag$dag, data.df = crbact, data.dists = mydists, 
+                           method = j, discretization.method = "doane")
+CairoSVG(paste0("Initial-dag-",j,".svg"))
+plotAbn(dag = mp.dag$dag, data.dists = mydists,
+        fitted.values = initialDAG$modes,
+        digits = 3,
+        edge.strength = strength.init,
+        edge.direction = "pc",
+        node.fillcolor = NA, edge.color = "black",
+        node.fontsize = 14, edge.fontsize = 14,
+        plot = TRUE)
+dev.off()
+}
+```
+
+```{r get_marginals}
+# get marginals
+orig.marg.f <- fitAbn(object=mp.dag,data.df=crbact,data.dists=mydists,compute.fixed=TRUE,n.grid=10000)
+marg.f <- orig.marg.f
+
+for(i in 1:length(marg.f$marginals)){ 
+ 
+  for(j in 1:length(marg.f$marginals[[i]])){
+   
+     if(sum(marg.f$marginals[[i]][[j]][,2]<0)){
+       print (paste(names(marg.f$marginals[[i]])[j], "has negative values!", sep=" "))
+       marg.f$marginals[[i]][[j]][which(marg.f$marginals[[i]][[j]][,2]<0),2]=0
+      }
+  }
+}
+
+# plot them
+#CairoPDF(paste(selected.model,"/margplots-initial.pdf",sep=""))
+CairoPDF("margplots-initial.pdf")
+for(i in 1:length(marg.f$marginals)){
+  cat("processing marginals for node:",nom1<-names(marg.f$marginals)[i],"\n") 
+  cur.node <- marg.f$marginals[i] ## get marginal for current node - this is a matrix [x,f(x)] 
+  cur.node<-cur.node[[1]];# this is always [[1]] for models without random effects
+  for(j in 1:length(cur.node)){ 
+    cat("processing parameter:",nom2 <- names(cur.node)[j],"\n") 
+    cur.param <- cur.node[[j]]
+    plot(cur.param,type="l",main=paste(nom1,":",nom2))} 
+}
+dev.off()
+```
+
+```{r check_marginals}
+######testing the reliability of the marginals (integrating and equating to 1)
+count=0
+myarea<-rep(NA,length(marg.f$marginals));names(myarea)<-names(marg.f$marginals);
+for(i in 1:length(marg.f$marginals)){
+  
+  for(j in 1:length(marg.f$marginals[[i]])){ #had to fix his code a bit...
+    a=marg.f$marginals[[i]]
+    tmp<-spline(a[[j]][,1],a[[j]][,2])
+    
+    count=count+1
+    myarea[count]<-sum(diff(tmp$x)*tmp$y[-1]);## just width x height of rectangles
+  }
+}
+
+#area1 <- myarea[49]
+#marg.f$marginals[["R.Ertapenem"]][["R.Ertapenem|R.Amox.Cla"]][,2] = marg.f$marginals[["R.Ertapenem"]][["R.Ertapenem|R.Amox.Cla"]][,2] / area1
+
+#area2 <- myarea[50]
+#marg.f$marginals[["R.Ertapenem"]][["R.Ertapenem|R.Cefu"]][,2] = marg.f$marginals[["R.Ertapenem"]][["R.Ertapenem|R.Cefu"]][,2] / area2
+
+#CairoSVG(paste(selected.model,"/Area-under-curve-initial-model.svg",sep=""))
+CairoSVG("Area-under-curve-initial-model.svg")
+barplot(myarea,ylab="Area under Density",ylim=c(0,2),las=2);# note that problems here may be overfitting
+abline(h=1,col='red')
+dev.off()
+```
+```{r save_first_part, include=FALSE}
+#save.image(file=paste(selected.model,"/Part1.RData",sep=""))
+save.image("Part1.RData")
+#load(file="Part1.RData")
+```
+
+```{r get_posteriors_setup_jags_input}
+# posterior paramater estimates for JAGS and precisions
+m<-marg.f$marginals
+Names=c()
+Precnames=c()
+iii=0
+for (i in 1:length(m)){
+  Names[i]=paste(names(m)[i],".p",sep="")
+  marglist=NULL
+  if(mydists[i]=='gaussian'){
+    for (j in 1:(length(m[[i]])-1)){
+      marglist=cbind(marglist,m[[i]][[j]])
+      
+    }
+    iii=iii+1
+    assign(Names[i],marglist)
+    
+    Precnames[iii]=paste("prec.",names(m)[i],".p",sep="")#our last fix-added .p
+    precmarglist=m[[i]][[length(m[[i]])]]
+    assign(Precnames[iii],precmarglist)
+  }
+  if(mydists[i]=='binomial'){
+    for (j in 1:length(m[[i]])){
+      marglist=cbind(marglist,m[[i]][[j]])
+      
+    }
+    assign(Names[i],marglist) 
+  }
+}
+
+# # throw the parameters into a file
+# why doesn't this work? It repeates Precnames as many times as there are Names.
+#dump(cbind(Names,Precnames), file='./runJAGS/post_params.R')
+dump(Names, file=paste(tmpdir,'post_params.R',sep=""))
+dump(Precnames, file=paste(tmpdir,'post_params.R',sep=""), append=T)
+
+# build the bugs file
+line=NULL
+line2=NULL
+AllLines=NULL
+for (i in 1:length(m)){
+  
+  if(mydists[i]=='gaussian'){
+    # gaussian variable
+    line=paste(names(m)[i]," ~ dnorm(mu.",names(m)[i],",prec.",names(m)[i],");",sep="")
+    line2=paste("mu.",names(m)[i],"<- ",names(m)[i],".c0",sep="")
+    k=2
+    while (k <=length(m[[i]])-1){     #creating the formula
+      var=strsplit(names(m[[i]])[k],split="[|]")[[1]][2]
+      line2=paste(line2,"+",names(m)[i],".c",as.character(k-1),"*",var,sep="")
+      k=k+1  
+    }
+    line2=paste(line2,";",sep="")
+    line=paste(line,line2,sep='\n')
+    
+    count=2
+    line3=NULL
+    line4=NULL
+    line5=NULL
+    for (j in 1:(length(m[[i]])-1)){
+      line3=paste(names(m)[i],".M",as.character(j-1)," ~ dcat(",names(m)[i],".p[     ,",count,"]);",sep="")
+      line4=paste(names(m)[i],".c",as.character(j-1)," <-",names(m)[i],".p[",names(m)[i],".M",as.character(j-1),",",count-1,"];",sep="")
+      count=count+2
+      line5=paste(line5,line3,line4,sep='\n')
+    }
+    
+    line=paste(line,line5,"\n",sep='\n')
+    
+    line6 = paste("prec.",names(m)[i],".M ~ dcat(prec.",names(m)[i],".p[     ,2]);",sep="")
+    line=paste(line,line6,sep='\n')
+    line7 = paste("prec.",names(m)[i]," <-         prec.",names(m)[i],".p[prec.",names(m)[i],".M,1];",sep="")
+    line=paste(line,line7,sep='\n')
+    
+    AllLines=paste(AllLines,line,"\n",sep='\n')
+  }
+  if(mydists[i]=='binomial'){
+    # binomial variable
+    line=paste(names(m)[i]," ~ dbern(p",as.character(i+1),");",sep="")
+    line2=paste("logit(p",as.character(i+1),")<- ",names(m)[i],".c0",sep="")
+    k=2
+    while (k <=length(m[[i]])){     #creating the formula
+      var=strsplit(names(m[[i]])[k],split="[|]")[[1]][2]
+      line2=paste(line2,"+",names(m)[i],".c",as.character(k-1),"*",var,sep="")
+      k=k+1
+      
+    }
+    line2=paste(line2,";",sep="")
+    line=paste(line,line2,sep='\n')
+    
+    count=2
+    line3=NULL
+    line4=NULL
+    line5=NULL
+    for (j in 1:length(m[[i]])){
+      line3=paste(names(m)[i],".M",as.character(j-1)," ~ dcat(",names(m)[i],".p[     ,",count,"]);",sep="")
+      line4=paste(names(m)[i],".c",as.character(j-1)," <-",names(m)[i],".p[",names(m)[i],".M",as.character(j-1),",",count-1,"];",sep="")
+      count=count+2
+      line5=paste(line5,line3,line4,sep='\n')
+    }
+    
+    line=paste(line,line5,"\n",sep='\n')
+    AllLines=paste(AllLines,line,"\n",sep='\n')
+  }
+  
+}
+
+
+AllLines=paste("model { \n",AllLines,"\n }",sep='\n')
+# cat(AllLines,file="c:/Projects/Cross Resistance/With Eli/JAGS Runs/model.bug")
+cat(AllLines,file=paste(tmpdir,'model.bug',sep=""))
+
+##Automated writing of the jags script and mcmc parameter choice##
+
+#we will write only the varying part of the file
+update='10000'
+
+thin=10
+line=NULL
+n=dim(crbact)[1]
+line=paste("initialize \n update ",update,", by(",as.character(as.numeric(update)/thin),")\n",sep="")
+for (i in 1:length(names(m))){
+  line=paste(line," monitor ",names(m)[i],", thin(",as.character(thin),")","\n",sep="")
+}
+
+line=paste(line,"update ",as.character(thin*n),", by(",as.character(n),") \n",sep="")
+cat(line)
+modelinit=line
+```
+
+```{r run_bootstrap}
+########### running bootsrap in a loop############
+###code for running boostrap in a loop- http://www.r-bayesian-networks.org/downloads/case_study_one/five_boot_run.R
+#max.par<-5;#parent limit for original data
+#index=1000#this index setup is for 5 runs on each machine-since i determines the seed 
+# start<-seq(1,1000,by=5);
+# stop<-seq(100,1000,by=5);
+# length(start[index]:stop[index]) #number of runs
+
+index=1000 # simulations
+
+start.time=Sys.time()
+dags <- foreach (i=1:index, .packages=c('coda','abn'), .errorhandling="pass") %dopar% { #MASTER LOOP - each interation
+  # creates a bootstrap sample and finds mostprobable model
+  #foreach (i=1:index) %do% { #MASTER LOOP - each interation
+  # creates a bootstrap sample and finds mostprobable model
+    
+  #########################################
+  #1. create parameter file with unique random seed
+  
+  #   setwd("C:/Projects/Cross Resistance/With Eli/JAGS Runs/")
+#  setwd('~/workspace/abn_bact/JAGS_Runs/')
+  init.file<-paste("init_",i,".R",sep="");#tempfile(pattern=paste("_",index,"_",sep=""),tmpdir=getwd());#file to hold jags seed
+  cat(paste("\".RNG.name\" <-\"base::Mersenne-Twister\"","\n",sep=""),file=paste(tmpdir,init.file,sep=""),append=FALSE);
+  cat(paste("\".RNG.seed\" <- ",i,"\n",sep=""),file=paste(tmpdir,init.file,sep=""),append=TRUE);#note i is unique
+  #2. create script file with unique output file name
+  run.file<-paste(tmpdir,"script_",i,".R",sep="");
+       #tempfile(pattern=paste("_",index,"_",sep=""),tmpdir=getwd());#file to hold jags seed
+  
+  #this is needed verbatim   
+  
+  cat("model in model.bug
+data in post_params.R
+compile, nchains(1) \n",file=run.file);
+  cat(paste("parameters in ",init.file,", chain(1) \n",modelinit,sep=""),file=run.file,append=TRUE);
+  out.file<-paste("out_",i,sep="");
+  cat(paste("coda *, stem(\"",out.file,"\")\n",sep=""),file=run.file,append=TRUE);
+  
+  #3. run the MCMC sampler
+  #   shell(paste('"C:\\Program Files\\JAGS\\JAGS-3.4.0\\x64\\bin\\jags"',run.file,sep=" "));
+  # shell(paste('"/share/apps/JAGS-3.4.0/bin/jags"',run.file,sep=" "));
+  #system(paste('"./jags.bat"',run.file,sep=" "));
+  if (OS == "Windows"){
+  shell(paste('cd "',tmpdir,'" & "C:/Program Files/JAGS/JAGS-4.3.0/x64/bin/jags.bat"'," ",'"',run.file,'"',sep=""));
+} else {
+  system(paste0("cd jags; /usr/bin/jags ",paste0("script_",i,".R")))
+  }
+
+  #system(paste('"C:/Program Files/JAGS/JAGS-4.3.0/x64/bin/jags.bat"',run.file,sep=" "));
+  
+  
+  #4. read in mcmc data and convert to format suitable for mostprobable
+  boot.data<-read.coda(paste(tmpdir,out.file,"chain1.txt",sep=""),paste(tmpdir,out.file,"index.txt",sep=""));
+  boot.data<-as.data.frame(boot.data);
+  for(j in 1:dim(crbact)[2]){if(is.factor(crbact[,j])){
+    boot.data[,j]<-as.factor(boot.data[,j]);
+    levels(boot.data[,j])<-levels(crbact[,j]);}
+  }
+  
+  #5. run the MostProb search on the bootstrap data
+  boot1.cache<-buildScoreCache(data.df=boot.data,data.dists=mydists, max.parents=max.par,
+                               dag.banned=banned);
+  mpdagsim <- mostProbable(score.cache=boot1.cache); # the output of this goes into dags
+  saveRDS(mpdagsim, file=paste0("mp-",i,".rds"))
+  mpdagsim
+}
+end.time = Sys.time()
+time.taken = end.time - start.time
+time.taken
+
+#dags=list()
+#nfile=0
+#foreach (i=1:100) %do% {
+# if(file.exists(paste0("mp-",i,".RData"))) {
+#   nfile=nfile+1
+#  load(file=paste0("mp-",i,".RData"))
+#  dags[[i]] <- mpdagsim}
+#  dags[[i]] <- readRDS(file=paste0("mp-",i,".rds))
+#}
+
+dags <- compact(dags)
+dags <- dags[lengths(dags)!=2]
+
+#save(dags,file=paste(selected.model,"/mp-",index,".RData",sep=""));
+save(dags,file=paste0("mps-",length(dags),".RData"));
+# load dags if needed
+#load(file="mps-1000.RData")
+```
+
+```{r analyze_bootstrap}
+##############analysing the boot and updating model###########
+##code for analysing the bootstrap and removing nodes -http://www.r-bayesian-networks.org/downloads/case_study_one/summary_bootstrap.R
+
+bestdag<-mp.dag #the best model, from above
+print(fitAbn(object=bestdag,data.df=crbact,data.dists=mydists)$mlik);
+
+# NO NEED, DAGS are in one opject
+## read ALL files with mp[number].RData and create one list of results.
+#boot.dags<-list();
+#these<-grep("mp\\d+.RData",dir());
+#num<-1;
+
+###if you want to load specific results ignore the begining of the loop and use
+# i="C:/Projects/Cross Resistance/With Eli/JAGS Runs//mp1ECOL150 runs.RData"
+
+#for(i in dir()[these]){#load each file
+#  load(i);#provides dags - a list
+#  tmp<-dags[which(unlist(lapply(dags,sum))>0)];#get valid entries in dags but as a list
+#  for(j in 1:length(tmp)){#for each entry copy into boot.dags, and increment counter
+#    boot.dags[[num]]<-tmp[[j]];num<-num+1;}
+#  rm(dags);
+#}
+
+### have a look at the mlik values for the bootstraps vis a vis the original
+scores<-rep(0,length(dags));
+for(i in 1:length(dags)){
+  scores[i]<-fitAbn(object=dags[[i]],data.df=crbact,data.dists=mydists)$mlik;
+  }
+
+## trim all arcs from the boot results which do not occur in the Master DAG
+# - bestdag - since we know these are due to overfitting!
+boot.dags.trim<-lapply(dags, `[[`, 1)
+for(i in 1:length(dags)){
+  boot.dags.trim[[i]]<-boot.dags.trim[[i]]*bestdag[[1]];
+}
+# see counts of arcs
+sumdags <- Reduce('+', boot.dags.trim)
+sumdags
+#index = 1000
+runs=length(dags)
+runs
+mat=sumdags/runs
+mat
+threshold=0.5
+reduced.5.dag <- (mat>threshold)+0
+sum(reduced.5.dag)
+threshold=.8
+reduced.8.dag <- (mat>threshold)+0
+sum(reduced.8.dag)
+
+# scores.b<-scores[-which(scores< -10000)];
+scores.b<-scores
+orig.score<-fitAbn(object=bestdag,data.df=crbact,data.dists=mydists)$mlik;
+#CairoSVG(paste(selected.model,"/mlik-distribution",index,".svg",sep=""))
+CairoSVG(paste0("mlik-distribution",length(dags),".svg"))
+plot(density(scores.b,from=min(c(scores.b,orig.score)),to=max(c(scores.b,orig.score))))
+abline(v=orig.score,lwd=2,col="blue")
+fit.5.mlik <- fitAbn(dag = reduced.5.dag,data.df=crbact,data.dists=mydists)$mlik;
+abline(v=fit.5.mlik,lwd=2,col="green")
+fit.8.mlik <- fitAbn(dag = reduced.8.dag,data.df=crbact,data.dists=mydists)$mlik;
+abline(v=fit.8.mlik,lwd=2,col="yellow")
+dev.off()
+
+#CairoSVG(paste(selected.model,"/mlik-scatter",index,".svg",sep=""))
+CairoSVG(paste0("mlik-scatter",length(dags),".svg"))
+plot(scores.b,ylim=c(min(c(scores.b,orig.score)),max(scores.b,orig.score)))
+abline(a=orig.score,b=0,lwd=2,col="blue")
+abline(a=fit.5.mlik,b=0,lwd=2,col="green")
+abline(a=fit.8.mlik,b=0,lwd=2,col="yellow")
+dev.off()
+
+# sum number of arcs per simulation
+arc.freq=sapply(boot.dags.trim,sum)
+arc.freq
+arc.freq<-table(unlist(arc.freq));#a<-a[-1]; #drop all null results
+bestdagarcfreq= sum(as.matrix(bestdag[[1]]))
+
+## plot the frequency of arcs
+#CairoPNG("bootres1.png",pointsize=10,width=720,height=640);#
+par(las=1);
+#par(mar=c(6.1,6.1,4.1,2.1));
+#barplot(arc.freq,ylab="",xlab="",col="skyblue",names.arg=names(arc.freq),ylim=c(0,length(start[index]:stop[index])));
+#CairoSVG(paste(selected.model,"/Arc-freq",index,".svg",sep=""))
+CairoSVG(paste0("Arc-freq",length(dags),".svg"))
+barplot(arc.freq,ylab="",xlab="",col="skyblue",names.arg=names(arc.freq),ylim=c(0,300))
+title(paste("Best DAG had",as.character(bestdagarcfreq),"arcs",sep=" "))
+par(las=1);
+#axis(1,at=seq(1,22,by=1));
+mtext("No. of arcs in bootstrap DAG",1,line=3,cex=1.5);
+par(las=3);
+#mtext(paste("Frequency out of",as.character(length(start[index]:stop[index])),sep=" "),2,line=4,cex=1.5)
+dev.off()
+```
+
+```{r draw_the_final_dags}
+#### now for some trimming
+# they trim the boot.dags within the following loop again
+
+#total.dag<-matrix(rep(0,dim(bestdag[[1]])[2]^2),ncol=dim(bestdag[[1]])[2]);colnames(total.dag)<-rownames(total.dag)<-colnames(bestdag);
+## get support for each arc - total.dag
+#for(i in 1:length(boot.dags)){
+#  if(sum(boot.dags[[i]])>0){total.dag<-total.dag+boot.dags[[i]];}}  ##if is a hack in case some of the entries are empty e.g. cluster crash.
+#total.dag<-total.dag*bestdag;##since only want arcs in the best DAG
+
+## get the majority consensus - directed DAG
+#f<-function(val,limit){if(val<limit){return(0);} else {return(1);}}
+# bestdag.trim<-apply(total.dag,c(1,2),FUN=f,limit=5000);
+#bestdag.trim<-apply(total.dag,c(1,2),FUN=f,limit=length(start[index]:stop[index])/2)#my change, limit is half the runs
+#sum(as.matrix(bestdag.trim))
+
+reduced.5 <- fitAbn(dag=reduced.5.dag,data.df=crbact,data.dists=mydists,create.graph=TRUE)
+reduced.8 <- fitAbn(dag=reduced.8.dag,data.df=crbact,data.dists=mydists,create.graph=TRUE)
+
+CairoSVG("Reduced.5.dag.svg")
+plotAbn(dag = reduced.5.dag, data.dists = mydists,
+        fitted.values = reduced.5$modes,
+        digits = 3,
+        edge.direction = "pc",
+        node.fillcolor = NA, edge.color = "black",
+        node.fontsize = 14, edge.fontsize = 14,
+        edge.arrowsize = 0,
+        plot = TRUE)
+dev.off()
+CairoPNG("Reduced.5.dag.png")
+plotAbn(dag = reduced.5.dag, data.dists = mydists,
+        fitted.values = reduced.5$modes,
+        digits = 3,
+        edge.direction = "pc",
+        node.fillcolor = NA, edge.color = "black",
+        node.fontsize = 14, edge.fontsize = 14,
+        edge.arrowsize = 0,
+        plot = TRUE)
+dev.off()
+
+method = c("mi.raw", "mi.raw.pc", "ls", "ls.pc", "stat.dist")
+for (j in method){
+
+strength.5 <- linkStrength(reduced.5.dag, data.df = crbact, data.dists = mydists, 
+                           method = j,
+                           discretization.method = "doane")
+
+CairoSVG(paste("Reduced.5-dag.",j,".svg",sep=""))
+plotAbn(dag = reduced.5.dag, data.dists = mydists,
+        fitted.values = reduced.5$modes,
+        digits = 3,
+        edge.strength = strength.5,
+        edge.direction = "pc",
+        node.fillcolor = NA, edge.color = "black",
+        node.fontsize = 14, edge.fontsize = 14,
+        plot = TRUE)
+dev.off()
+strength.8 <- linkStrength(reduced.8.dag, data.df = crbact, data.dists = mydists, 
+                           method = j,
+                           discretization.method = "doane")
+
+CairoSVG(paste("Reduced.8-dag.",j,".svg",sep=""))
+plotAbn(dag = reduced.8.dag, data.dists = mydists,
+        fitted.values = reduced.8$modes,
+        digits = 3,
+        edge.strength = strength.8,
+        edge.direction = "pc",
+        node.fillcolor = NA, edge.color = "black",
+        node.fontsize = 14, edge.fontsize = 14,
+        plot = TRUE)
+dev.off()
+}
+
+#eAttrs <- list()
+#eAttrs$label <- c("a~h"="Label 1", "c~h"="Label 2")
+
+#attrs <- list(node=list(shape="ellipse", fixedsize=FALSE))
+plot(reduced.5.dag)
+
+#save(reduced.5,file=paste(selected.model,"/BestDAGTrim.5-",index,".RData",sep=""));
+#save(reduced.8,file=paste(selected.model,"/BestDAGTrim.8-",index,".RData",sep=""));
+save(reduced.5,file=paste0("BestDAGTrim.5-",length(dags),".RData"));
+save(reduced.8,file=paste0("BestDAGTrim.8-",length(dags),".RData"));
+```
+
+```{r check_final_marginals}
+###The next step is to estimate the archs' strength and p value##
+
+################ Last part - compute marginals for this best model##################
+###code for computing marginals and CIs for the best model- http://www.r-bayesian-networks.org/downloads/case_study_one/marginals_summary.R
+
+# defining the marginals of the best model
+marg.f<-fitAbn(dag=reduced.5.dag,data.df=crbact,data.dists=mydists,compute.fixed=TRUE,n.grid=10000);#,
+
+#checking the marginals again
+####Check if any density is negative (and fix it to be zero)###
+for(i in 1:length(marg.f$marginals)){
+
+  for(j in 1:length(marg.f$marginals[[i]])){
+
+    if(sum(marg.f$marginals[[i]][[j]][,2]<0)){
+      print (paste(names(marg.f$marginals[[i]])[j], "has negative values!", sep=" "))
+      marg.f$marginals[[i]][[j]][which(marg.f$marginals[[i]][[j]][,2]<0),2]=0
+    }
+  }
+
+}
+
+#print marginal densities to pdf
+# CairoPDF("C:/Projects/Cross Resistance/With Eli/margplotsTrimmed.pdf")
+#CairoPDF(paste(selected.model,"/margplots.5.pdf",sep=""))
+CairoPDF("margplots.5.pdf")
+for(i in 1:length(marg.f$marginals)){
+  cat("processing marginals for node:",nom1<-names(marg.f$marginals)[i],"\n");
+  cur.node<-marg.f$marginals[i];## get marginal for current node - this is a matrix [x,f(x)]
+  cur.node<-cur.node[[1]];# this is always [[1]] for models without random effects
+  for(j in 1:length(cur.node)){
+    cat("processing parameter:",nom2<-names(cur.node)[j],"\n");
+    cur.param<-cur.node[[j]];
+    plot(cur.param,type="l",main=paste(nom1,":",nom2));
+  }
+}
+dev.off()
+
+#####testing the reliability of the marginals (integrating and equating to 1)
+count=0
+myarea<-rep(NA,length(marg.f$marginals));names(myarea)<-names(marg.f$marginals);
+for(i in 1:length(marg.f$marginals)){
+
+
+  for(j in 1:length(marg.f$marginals[[i]])){ #had to fix his code a bit...
+    a=marg.f$marginals[[i]]
+    tmp<-spline(a[[j]][,1],a[[j]][,2])
+
+    count=count+1
+    myarea[count]<-sum(diff(tmp$x)*tmp$y[-1]);## just width x height of rectangles
+  }
+}
+
+#CairoSVG(paste(selected.model,"/Area-under-density.5.svg",sep=""))
+CairoSVG("Area-under-density.5.svg")
+barplot(myarea,ylab="Area under Density",ylim=c(0,2),las=2);# note that problems here may be overdetermined data (to few observations)
+abline(h=1,col='red')
+
+
+## now for a table of quantiles
+# this is done again in summarize-dags.R, so not needed
+
+bestdag.trim <- reduced.5.dag
+margs<-marg.f$marginals;
+ngauss <- sum(mydists=="gaussian")
+arcnum=sum(bestdag.trim)+dim(bestdag.trim)[1]+ngauss #the total parameters-arcs+intercepts+ngauss
+mymat<-matrix(nrow=arcnum,ncol=5);colnames(mymat)<-c("2.5%","median","97.5%","mode","Significant");
+myvec=c()
+count=0
+for(i in 1:length(margs)){   #I changed here a lot!!!
+  tmp<-margs[[i]];
+  for(j in 1:length(tmp)){
+    tmp2<-cumsum(tmp[[j]][,2])/sum(tmp[[j]][,2])
+    count=count+1
+    mymat[count,1:3]=c(tmp[[j]][which(tmp2>0.025)[1]-1,1],## -1 is so use value on the left of the 2.5%
+                    tmp[[j]][which(tmp2>0.5)[1],1],
+                    tmp[[j]][which(tmp2>0.975)[1],1])
+
+    myvec[count]=names(tmp)[j];
+    issignif <- prod(as.numeric(mymat[count,1]),as.numeric(mymat[count,3]))>0
+    if(issignif){
+        mymat[count,5] <- "*"
+    } else{
+        mymat[count,5] <- "NS"
+    }
+    mymat[count,1:3]<-as.numeric(formatC(mymat[count,1:3],digits=3,format="f"));
+    mymat[count,4] <- reduced.5$modes[[i]][[j]]
+
+  }
+}
+CImat=cbind(myvec,mymat)
+CImat=as.data.frame(CImat)
+CImat
+#write.table(CImat,file=paste(selected.model,"/CImat.5.csv",sep=""),quote=F,sep=",",row.names=F)
+write.table(CImat,file="CImat.5.csv",quote=F,sep=",",row.names=F)
+```

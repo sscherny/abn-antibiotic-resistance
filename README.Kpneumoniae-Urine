@@ -1,0 +1,4 @@
+This directory contains the R code used to analyzerun abn models on
+the K pneumoniae urine sample data for "Bayesian network modelling of
+patterns of antibiotic cross-resistance by bacterial sample source" by
+Cherny, Chowers, and Obolski. The data are available by request.
